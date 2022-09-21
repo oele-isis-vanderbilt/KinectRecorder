@@ -91,9 +91,6 @@ public class DepthManager : SourceManager {
         ushort* frameData = (ushort*)depthFrameData;
         int frameDataLength = (int)(depthFrameDataSize / _FrameDescription.BytesPerPixel);
 
-        Debug.Log(minDepth);
-        Debug.Log(maxDepth);
-
         for (int i = 0; i < frameDataLength; ++i) {
             ushort depth = frameData[i];
             Color color = depth >= MIN_LUT_DEPTH && depth <= MAX_LUT_DEPTH ? depthLUT.Evaluate(System.Convert.ToSingle(depth) / (float)MAX_LUT_DEPTH) : Color.black;

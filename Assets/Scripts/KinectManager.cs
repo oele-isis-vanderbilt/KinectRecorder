@@ -7,10 +7,10 @@ using UnityEngine.UI;
 using Windows.Kinect;
 using TMPro;
 using System.Text;
+using System.Net;
 
 public class KinectManager : MonoBehaviour {
 
-    public int FrameRate = 30;
     public RawImage _colorImage;
     public RawImage _depthImage;
     public TextMeshProUGUI recordTimeText;
@@ -18,18 +18,26 @@ public class KinectManager : MonoBehaviour {
     private KinectSensor _Sensor;
     private List<SourceManager> _Sources;
     private List<Recorder> _Recorders;
+    private List<UDPSender> _UDPSenders;
     private bool _recording;
     private string outFolder;
     private float elapsedTime;
     private int numRecordedFrames;
     private System.DateTime startTime;
+    private IPAddress ip;
+    private int port;
+    private int FrameRate;
+    private float elapsedTimeFrame;
 
     #region Monobehaviors
     private void Start() {
         FFmpegLoader.FFmpegPath = Path.Combine(Application.streamingAssetsPath, "ffmpeg-5.1-full_build-shared", "bin");
+        LoadSettings();
+
         _Sensor = KinectSensor.GetDefault();
         _Sources = new List<SourceManager>();
         _Recorders = new List<Recorder>();
+        _UDPSenders = new List<UDPSender>();
 
         if (_Sensor != null) {
             if (!_Sensor.IsOpen) {
@@ -41,6 +49,37 @@ public class KinectManager : MonoBehaviour {
         }
     }
 
+    private void LoadSettings() {
+        ip = IPAddress.Parse("127.0.0.1");
+        port = 8765;
+        FrameRate = 30;
+
+        var settingsDict = new Dictionary<string, string>();
+        var configPath = Path.Combine(Application.streamingAssetsPath, "settings.cfg");
+        if (File.Exists(configPath)) {
+            foreach (string line in File.ReadLines(configPath)) {
+                string[] splits = line.Split('=');
+                settingsDict.Add(splits[0], splits[1]);
+            }
+        }
+
+        if (settingsDict.ContainsKey("ip")) {
+            try {
+                ip = IPAddress.Parse(settingsDict["ip"]);
+            } catch { }
+        }
+        if (settingsDict.ContainsKey("port")) {
+            try {
+                port = int.Parse(settingsDict["port"]);
+            } catch { }
+        }
+        if (settingsDict.ContainsKey("fps")) {
+            try {
+                FrameRate = int.Parse(settingsDict["fps"]);
+            } catch { }
+        }
+    }
+
     private void Update() {
         foreach(var source in _Sources) {
             source.UpdateFrame();
@@ -49,6 +88,7 @@ public class KinectManager : MonoBehaviour {
 
         if (_recording) {
             elapsedTime += Time.deltaTime;
+            elapsedTimeFrame += Time.deltaTime;
         }
         var hours = Mathf.Floor(elapsedTime / 3600f);
         var remaining = elapsedTime - hours * 3600f;
@@ -59,8 +99,9 @@ public class KinectManager : MonoBehaviour {
     }
 
     private void OnApplicationQuit() {
+        if(_recording)
+            StopRecording();
         _recording = false;
-        StopRecording();
 
         if (_Sensor.IsOpen) {
             _Sensor.Close();
@@ -82,6 +123,7 @@ public class KinectManager : MonoBehaviour {
 
         foreach (var source in _Sources) {
             _Recorders.Add(new Recorder(source, FrameRate, outFolder));
+            _UDPSenders.Add(new UDPSender(source, ip, port));
         }
 
         StartCoroutine(I_WriteVideo());
@@ -92,7 +134,12 @@ public class KinectManager : MonoBehaviour {
             recorder.Dispose();
         }
         _Recorders.Clear();
+        foreach (var sender in _UDPSenders) {
+            sender.Dispose();
+        }
+        _UDPSenders.Clear();
         elapsedTime = 0;
+        elapsedTimeFrame = 0;
 
         var endTime = System.DateTime.Now;
         var elapsedSeconds = endTime.Subtract(startTime).TotalSeconds;
@@ -118,8 +165,12 @@ public class KinectManager : MonoBehaviour {
             foreach(var recorder in _Recorders) {
                 recorder.WriteFrame();
             }
+            foreach(var sender in _UDPSenders) {
+                sender.WriteFrame();
+            }
             numRecordedFrames += 1;
-            yield return new WaitForSeconds(1f / (float)FrameRate);
+            elapsedTimeFrame = 0;
+            yield return new WaitUntil(() => { return elapsedTimeFrame >= (1f / FrameRate); });
         }
     }
 
@@ -135,7 +186,6 @@ public class KinectManager : MonoBehaviour {
         var itemPath = Path.Combine(Application.persistentDataPath, "recordings");
         Directory.CreateDirectory(itemPath);
         itemPath = itemPath.Replace("/", "\\");
-        Debug.Log(itemPath);
         System.Diagnostics.Process.Start("explorer.exe", $"/select,{itemPath}");
     }
 
