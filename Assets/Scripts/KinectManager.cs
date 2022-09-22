@@ -19,6 +19,7 @@ public class KinectManager : MonoBehaviour {
     private List<SourceManager> _Sources;
     private List<Recorder> _Recorders;
     private List<UDPSender> _UDPSenders;
+    private POSTSender _POSTSender;
     private bool _recording;
     private string outFolder;
     private float elapsedTime;
@@ -27,6 +28,9 @@ public class KinectManager : MonoBehaviour {
     private IPAddress ip;
     private int port;
     private int FrameRate;
+    private string endpoint;
+    private bool sendUDP;
+    private bool sendPOST;
     private float elapsedTimeFrame;
 
     #region Monobehaviors
@@ -53,13 +57,16 @@ public class KinectManager : MonoBehaviour {
         ip = IPAddress.Parse("127.0.0.1");
         port = 8765;
         FrameRate = 30;
+        endpoint = "/api/datasource";
 
         var settingsDict = new Dictionary<string, string>();
         var configPath = Path.Combine(Application.streamingAssetsPath, "settings.cfg");
         if (File.Exists(configPath)) {
             foreach (string line in File.ReadLines(configPath)) {
-                string[] splits = line.Split('=');
-                settingsDict.Add(splits[0], splits[1]);
+                try {
+                    string[] splits = line.Split('=');
+                    settingsDict.Add(splits[0], splits[1]);
+                } catch { }
             }
         }
 
@@ -76,6 +83,21 @@ public class KinectManager : MonoBehaviour {
         if (settingsDict.ContainsKey("fps")) {
             try {
                 FrameRate = int.Parse(settingsDict["fps"]);
+            } catch { }
+        }
+        if (settingsDict.ContainsKey("endpoint")) {
+            try {
+                endpoint = settingsDict["endpoint"];
+            } catch { }
+        }
+        if (settingsDict.ContainsKey("sendUDP")) {
+            try {
+                sendUDP = bool.Parse(settingsDict["sendUDP"]);
+            } catch { }
+        }
+        if (settingsDict.ContainsKey("sendPOST")) {
+            try {
+                sendPOST = bool.Parse(settingsDict["sendPOST"]);
             } catch { }
         }
     }
@@ -125,6 +147,7 @@ public class KinectManager : MonoBehaviour {
             _Recorders.Add(new Recorder(source, FrameRate, outFolder));
             _UDPSenders.Add(new UDPSender(source, ip, port));
         }
+        _POSTSender = new POSTSender(ip, port, endpoint, _Sources);
 
         StartCoroutine(I_WriteVideo());
     }
@@ -165,9 +188,13 @@ public class KinectManager : MonoBehaviour {
             foreach(var recorder in _Recorders) {
                 recorder.WriteFrame();
             }
-            foreach(var sender in _UDPSenders) {
-                sender.WriteFrame();
+            if (sendUDP) {
+                foreach (var sender in _UDPSenders) {
+                    sender.WriteFrame();
+                }
             }
+            if(sendPOST)
+                _POSTSender.SendFrame();
             numRecordedFrames += 1;
             elapsedTimeFrame = 0;
             yield return new WaitUntil(() => { return elapsedTimeFrame >= (1f / FrameRate); });
